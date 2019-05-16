@@ -3,60 +3,63 @@ import json
 import ast
 from google.cloud import bigquery
 import datetime
+    
 
 with open("config_middleware_sentiment.json", "r") as read_file:
     conf = json.load(read_file)['middleware_sentiment_classification']
+client = bigquery.Client(project=conf['project'])
+
 #------------------------------------------------------------------------------------
 
 def export_items_to_bigquery(object):
     # Instantiates a client
-
+    now = datetime.datetime.now()
+    datenow = now.strftime("%Y%m%d")
     # Prepares a reference to the dataset
     dataset_ref = client.dataset(conf['destination_dataset'])
 
-    table_ref = dataset_ref.table(conf['destination_table'])
+    table_ref = dataset_ref.table(conf['destination_table']+'$'+ datenow)
     table = client.get_table(table_ref)  # API call
     
     errors = client.insert_rows(table, object)  # API request
     assert errors == []
 
 #----------------------------------------------------------------------------------
-def sql_bq(ds):
-    client = bigquery.Client(project=conf['project'])
+def sql_bq():
     query = (
     "SELECT * FROM `{dataset}.{table}`"
-    " WHERE DATE(_PARTITIONTIME) = '{partition}'").format(
+    " WHERE DATE(_PARTITIONTIME) = '2017-04-03'").format(
         dataset = conf['dataset'],
-        table = conf['table'],
-        partition = ds)
+        table = conf['table'])
     query_job = client.query(query)  # API request
     rows = query_job.result()  # Waits for query to finish
-
+    
     return rows
 
 def query_sentiment_result():
     sql = sql_bq()
     array_sentiment = []
-    #array_desc = []
+    array_desc = []
     for row in sql:
         body = {
         "text": [
             row[0]
         ]
         }
-        desc = row[0]       
-        r = requests.post(conf['api_sentiment'],
+        r = requests.post(conf['api_sentiment_inc'],
                         headers={"content-type": "application/json"},
                         data=json.dumps(body))
+        
         response = r.content
         responseJson = response.decode('utf-8').replace("'",'"')
         result =json.loads(responseJson)
         predictResult = result['predict']
         arrayResult = ast.literal_eval(predictResult)[0]
         array_sentiment.append(arrayResult)
-        #array_desc.append(desc)
+        
     return array_sentiment
-    
+
+  
 
 def query_classification_result():
     sql = sql_bq()
@@ -67,8 +70,7 @@ def query_classification_result():
             row[0]
         ]
         }
-        desc = row[0]       
-        r = requests.post(conf['api_classification'],
+        r = requests.post(conf['api_classification_inc'],
                         headers={"content-type": "application/json"},
                         data=json.dumps(body))
         response = r.content
@@ -129,33 +131,40 @@ def classification_model():
             classification_numerical = '6'
         arrays.append([class_names,classification_numerical])
     return arrays
-  
    
     
-def main():
-    #query_sentiment_result()
-    #array_sentiment = query_sentiment_result()
-    print(classification = classification_model())
-    #sentiment = sentiment_model()
-    """
+def transform():
+    desc = []
+    created_at = []
+    resource = []
+    for row in sql_bq():
+        desc.append(row.description.encode("utf-8"))
+        created_at.append(row.created_at.isoformat())
+        resource.append(row.resource.encode("utf-8"))
+    
+    sentiment = sentiment_model()
+    classification = classification_model()
+    mergeSA = list(map(list.__add__,sentiment,classification))
+    
     now = datetime.datetime.now()
     datenow = now.strftime("%Y-%m-%d")
-
-    mergeSA = list(map(list.__add__,sentiment,classification))
-    arr_1 = []
+    
+    list_first = []
     for i in mergeSA:
         i.append(datenow)
-        arr_1.append(i)
-    print(arr_1)
-    """
-    """
-    merged_list = [[desc[j], arr_1[j][0],arr_1[j][1],arr_1[j][2],arr_1[j][3],arr_1[j][4]] for j in range(0, len(desc))]
+        list_first.append(i)
+    
+    merged_list = [[desc[j], list_first[j][0],list_first[j][1],list_first[j][2],list_first[j][3],list_first[j][4],resource[j],created_at[j]] for j in range(0, len(desc))]
     arr_final = []
     for k in merged_list:
         arr_final.append(tuple(k))
-    print(arr_final)
-    #export_items_to_bigquery(arr_final)
-    """
+    
+    return arr_final
+    
+    
+def main():
+    #print(transform())
+    export_items_to_bigquery(transform())
     
 if __name__ == '__main__':
     main()
