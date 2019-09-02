@@ -1,0 +1,4 @@
+requests
+google-cloud-bigquery
+emoji
+google-cloud-storage
